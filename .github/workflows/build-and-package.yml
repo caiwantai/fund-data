@@ -1,0 +1,110 @@
+name: Build and Package
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    timeout-minutes: 90
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+
+    - name: Cache Electron
+      id: cache-electron
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.electron
+          ${{ runner.temp }}/electron-cache
+        key: ${{ runner.os }}-electron-cache-${{ hashFiles('**/package-lock.json') }}
+
+    - name: Set Electron environment variables
+      run: |
+        echo "ELECTRON_CACHE=${{ runner.temp }}/electron-cache" >> $GITHUB_ENV
+        echo "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/" >> $GITHUB_ENV
+
+    - name: Install dependencies
+      run: npm ci --legacy-peer-deps --verbose
+
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        Write-Host "Starting build process on Windows..."
+        npx tsc
+        npx vite build --mode production
+        npx electron-builder --publish never
+        Write-Host "Build completed!"
+
+    - name: Build (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        echo "Starting build on macOS..."
+        npx tsc
+        npx vite build --mode production
+        npx electron-builder --publish never
+        echo "Build completed!"
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-${{ matrix.os }}
+        path: dist/
+        if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Flatten artifacts into single release folder
+        run: |
+          mkdir -p final-release
+          find artifacts -type f  -name "*.exe" -o -name "*.dmg" -o -name "*.zip"  -exec cp {} final-release/ 
+          ls -la final-release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            final-release/*.exe
+            final-release/*.dmg
+            final-release/*.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          tag_name: v${{ github.run_number }}
+          name: Fund-Data v${{ github.run_number }}
+          body: |
+            ## 更新内容
+
+            - Windows: .exe 安装包
+            - macOS: .dmg 和 .zip 安装包
+            
+            构建信息：
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+            - 构建编号: ${{ github.run_number }}
