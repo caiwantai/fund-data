@@ -39,31 +39,41 @@ jobs:
 
     - name: Rename artifacts (Windows)
       if: matrix.os == 'windows-latest'
+      shell: pwsh
       run: |
         cd dist
-        Get-ChildItem -Include "*Setup*.exe", "*.exe" -Exclude "*.blockmap" | ForEach-Object { Move-Item $_ ".\fund-data-windows-$($env:GITHUB_SHA.Substring(0,7))-$($_.Name)" }
-      shell: pwsh
+        Get-ChildItem -Path . -Include *.exe,*.zip -File | ForEach-Object {
+          $newName = "fund-data-windows-$($env:GITHUB_SHA.Substring(0,7))$($_.Name)"
+          Move-Item $_ $newName
+        }
 
     - name: Rename artifacts (macOS)
       if: matrix.os == 'macos-latest'
+      shell: bash
       run: |
-        cd dist && find . -type f -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" \) -exec mv {} fund-data-macos-${GITHUB_SHA:0:7}-{} \;
+        cd dist
+        for file in *.dmg *.zip; do
+          if [ -f "$file" ]; then
+            mv "$file" "fund-data-macos-${GITHUB_SHA:0:7}-$file"
+          fi
+        done
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-build
         path: |
-          dist/fund-data-*.exe
-          dist/fund-data-*.dmg
-          dist/fund-data-*.zip
-        retention-days: 30
+          dist/*.exe
+          dist/*.dmg
+          dist/*.zip
+        retention-days: 7
         if-no-files-found: error
 
   release:
     needs: build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
+    # Only run on tag pushes matching v*.*.*
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
 
     steps:
     - name: Checkout code
@@ -74,26 +84,23 @@ jobs:
       with:
         path: artifacts
 
-    - name: Display structure of downloaded files
-      run: ls -la artifacts
-
-    - name: Set release version
-      id: version
+    - name: Flatten artifacts into a single directory
       run: |
-        if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
-          echo "version=main-$(date +'%Y%m%d-%H%M%S')" >> $GITHUB_OUTPUT
-        else
-          echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-        fi
+        mkdir -p release-assets
+        find artifacts -type f \( -name "*.exe" -o -name "*.dmg" -o -name "*.zip" \) -exec cp {} release-assets/ \;
 
-    - name: Create Release
+    - name: Extract version from tag
+      id: version
+      run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+    - name: Create GitHub Release
       uses: ncipollo/release-action@v1
       with:
-        artifacts: "artifacts/**/*"
+        artifacts: "release-assets/*"
         token: ${{ secrets.GITHUB_TOKEN }}
-        tag: ${{ steps.version.outputs.version }}
+        tag: ${{ github.ref }}
         name: Release ${{ steps.version.outputs.version }}
         generateReleaseNotes: true
-        allowUpdates: true
+        allowUpdates: false  # Prevent accidental overwrite; delete tag if rebuild needed
         draft: false
-        prerelease: ${{ github.ref == 'refs/heads/main' }}
+        prerelease: false
