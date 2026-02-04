@@ -41,19 +41,22 @@ jobs:
       if: matrix.os == 'windows-latest'
       run: |
         cd dist
-        Get-ChildItem -Recurse -Include *.exe,*.zip | ForEach-Object { Move-Item $_ ".\fund-data-windows-$($env:GITHUB_SHA.Substring(0,7))$(Split-Path $_ -Leaf)" }
+        Get-ChildItem -Include "*Setup*.exe", "*.exe" -Exclude "*.blockmap" | ForEach-Object { Move-Item $_ ".\fund-data-windows-$($env:GITHUB_SHA.Substring(0,7))-$($_.Name)" }
       shell: pwsh
 
     - name: Rename artifacts (macOS)
       if: matrix.os == 'macos-latest'
       run: |
-        cd dist && find . -type f \( -name "*.dmg" -o -name "*.zip" \) -exec mv {} fund-data-macos-${GITHUB_SHA:0:7}{} \;
+        cd dist && find . -type f -maxdepth 1 \( -name "*.dmg" -o -name "*.zip" \) -exec mv {} fund-data-macos-${GITHUB_SHA:0:7}-{} \;
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.os }}-build
-        path: dist/*
+        path: |
+          dist/fund-data-*.exe
+          dist/fund-data-*.dmg
+          dist/fund-data-*.zip
         retention-days: 30
         if-no-files-found: error
 
